@@ -25,15 +25,18 @@ const Koa = require('koa');
 const koaBodyparser = require('koa-bodyparser');
 const koaCompress = require('koa-compress');
 const koaSend = require('koa-send');
+const session = require('koa-session')
 const koaStatic = require('koa-static');
 const koaWebpack = require('koa-webpack');
+const grant = require('grant-koa');
+const koaMount = require('koa-mount');
 const webpack = require('webpack');
 const jwt = require('jsonwebtoken');
-
 const webpackConfig = require('../webpack.config');
 const grpcClient = require('./middleware/grpc-client');
 const tchannelClient = require('./middleware/tchannel-client');
 const router = require('./router');
+const config = require('../config/oauth');
 const {
   PEERS_DEFAULT,
   REQUEST_RETRY_FLAGS_DEFAULT,
@@ -45,6 +48,9 @@ const {
 
 const staticRoot = path.join(__dirname, '../dist');
 const app = new Koa();
+app.keys = ['grant']
+app.use(session(app));
+
 const transportClients = {
   tchannel: tchannelClient,
   grpc: grpcClient,
@@ -92,8 +98,8 @@ app.init = function({
     console.log('Unhandled Rejection at:', promise, 'reason:', reason);
   });
 
-  app
-    .use(async (ctx, next) => {
+ 
+app.use(async (ctx, next) => {
       try {
         await next();
       } catch (err) {
@@ -124,10 +130,20 @@ app.init = function({
             algorithm: 'RS256',
           }
         );
-
         ctx.authTokenHeaders['cadence-authorization'] = token;
       }
 
+      await next();
+    })
+    .use(async function(ctx, next) {
+    // enforcing Oauth check by default for testing purposes. Later, this has to be guarded by config check
+    // paths /connect* and /login are not required to have access token
+      if (!ctx.path.startsWith('/connect') && !ctx.path.startsWith('/login') && (!ctx.session.access_token)) {
+        ctx.response.redirect("/login");
+        return
+      }
+      ctx.authTokenHeaders = ctx.authTokenHeaders || {};
+      ctx.authTokenHeaders['cadence-authorization'] = ctx.session.access_token;
       await next();
     })
     .use(transportClient({ peers, requestConfig }))
@@ -140,6 +156,7 @@ app.init = function({
           })
         : koaStatic(staticRoot)
     )
+    .use(koaMount(grant(config)))
     .use(router.routes())
     .use(router.allowedMethods())
     .use(async function(ctx, next) {

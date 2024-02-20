@@ -20,6 +20,7 @@
 // THE SOFTWARE.
 
 const Router = require('koa-router');
+const oauth = require('../../config/oauth');
 
 const {
   clearCacheHandler,
@@ -154,5 +155,25 @@ router.get('/api/feature-flags/:key', featureFlagHandler);
 router.get('/api/domains/:domain/task-lists/:taskListName', tasklistHandler);
 
 router.get('/health', healthHandler);
+
+
+// Login page will redirect you to auth provider configured
+router.all('/login', async (ctx, next) => {
+  ctx.response.redirect("/connect/"+oauth.defaults.provider)
+  return
+})
+
+// @todo Add logout handler which removes access_token from the session
+
+router.all('/connect/:provider/:override?', async (ctx, next) => {
+
+    if (ctx.state.grant.response.access_token) {
+      ctx.session.access_token = ctx.state.grant.response.access_token
+    }
+    // Oauth flow ends with address like /connect/cognito/callback?code=XXXXXX. 
+    // This redirect will get you to the front page of cadence-web
+    ctx.response.redirect("/")
+    return
+})
 
 module.exports = router;
